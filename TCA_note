@@ -90,7 +90,7 @@ class TCA:
 # step1：首先计算 L 和 H 矩阵
         #计算M矩阵（其实就是L矩阵）（MMD引入的矩阵）
         ns, nt = len(Xs), len(Xt)  # 得到L计算公式中的ns,nt的值，即样本个数
-        # print(ns,nt) # 源域样本个数Ns: 958 目标域中用于训练的样本个数Nt: 50
+        # print(ns,nt) # 源域样本个数Ns: 958 （958即为Office-Caltech10数据集中Amazon在线电商图片的数量）；目标域中用于训练的样本个数Nt: 50
 
         # e为(958+ 50)=1008*1维矩阵
         # 其中np.ones((ns, 1))代表生成ns行1列的全是1的矩阵;
@@ -167,7 +167,7 @@ class TCA:
 
     def fit_predict(self, Xs, Ys, Xt, Yt):
         '''
-        Transform Xs and Xt, then make predictions on target using 1NN
+        变换Xs和Xt，然后使用1NN对目标进行预测
         :param Xs: ns * n_feature, source feature   Xs是大小为ns*n_feature的矩阵，包含源域的特征，其中ns是样本数量，n_feature是特征数量
         :param Ys: ns * 1, source label;   Ys是包含源域的标签的大小为ns*1的向量
         :param Xt: nt * n_feature, target feature;   是大小为nt*n_feature的矩阵，包含目标域的特征，其中nt是样本数量，n_feature是特征数量
@@ -181,14 +181,19 @@ class TCA:
         """
         接下来，在变换后的源特征矩阵Xs_new及其对应的标签Ys.ravel（）上
         训练n_neighbors＝1的K近邻分类器。
-        然后，该方法使用该训练后的分类器对变换后的目标特征矩阵Xt_new进行预测，
+        然后，使用该训练后的分类器对变换后的目标特征矩阵Xt_new进行预测，
         并将预测的标签存储在y_pred中。
+        
+        总结：step1：先将Xs,Xt通过fit()函数中的迁移过程，将其转换为Xs_new, Xt_new，
+             step2：然后利用变换后的源特征矩阵Xs_new及其对应的标签Ys.ravel（）上训练n_neighbors＝1的K近邻分类器；（利用新特征空间中的源域数据训练模型f(x)）
+             step3：使用训练好的分类器模型f(x),对变换后的目标特征矩阵Xt_new进行预测，并将预测的标签存储在y_pred中.
         """
         clf = KNeighborsClassifier(n_neighbors=1)
         clf.fit(Xs_new, Ys.ravel())
         y_pred = clf.predict(Xt_new)
 
         """
+        检验训练的分类器在目标域的预测性能：
         使用sklearn.metrics.accurcy_score计算预测的分类精度，
         该方法将预测标签y_pred与目标域Yt的真实标签进行比较。
         """
@@ -198,14 +203,16 @@ class TCA:
 
 
     # 现用Xt和Xs创建隐空间, 再把Xt2（测试集样本）映射到这个隐空间
-    """
-    其它部分的代码与fit部分相同, 不再赘述, 只有利用变换矩阵做特征映射时不同。
-    fit_new用的变换矩阵A与fit相同, A的计算利用全部训练集的核矩阵K(X,X)得到。
-    但fit_new特征映射时用的核矩阵不同, 是训练集与测试集间的K(Xt2, X), 在本节简记为K.
-    其中Xt2为测试集样本, Xt2中的样本元素记为y, 样本个数为n3.
-    """
-    # 在该博客文末，作者对fit_new进行的修改，其在其它数据集上精确度有明显提升。文章地址：https://blog.csdn.net/lagoon_lala/article/details/120800667
     def fit_new(self, Xs, Xt, Xt2):
+
+        """
+        其它部分的代码与fit部分相同, 不再赘述, 只有利用变换矩阵做特征映射时不同。
+        fit_new用的变换矩阵A与fit相同, A的计算利用全部训练集的核矩阵K(X,X)得到。
+        但fit_new特征映射时用的核矩阵不同, 是训练集与测试集间的K(Xt2, X), 在本节简记为K.
+        其中Xt2为测试集样本, Xt2中的样本元素记为y, 样本个数为n3.
+        """
+        # 在该博客文末，作者对fit_new进行的修改，其在其它数据集上精确度有明显提升。文章地址：https://blog.csdn.net/lagoon_lala/article/details/120800667
+
         '''
         Map Xt2 to the latent space created from Xt and Xs 将Xt2映射到由Xt和Xs创建的隐空间
         :param Xs : ns * n_feature, source feature
@@ -267,7 +274,18 @@ class TCA:
 
 
 if __name__ == '__main__':
+    """
+    使用scipy.io.loadmat函数从不同的领域加载数据。
+    这些领域在“domains”列表中指定，包含了四个字符串，
+    分别表示以MATLAB格式存储的数据文件名。
+    """
     domains = ['caltech_decaf.mat', 'amazon_decaf.mat', 'webcam_decaf.mat', 'dslr_decaf.mat']
+
+    """
+    然后，该脚本循环遍历列表中的每对领域（不包括相同索引的对），
+    对于每一对，它使用loadmat函数加载相应的数据。
+    分别将两个领域的数据存储在“src_domain”和“tar_domain”变量中。
+    """
     for i in [1]:
         for j in [2]:
             if i != j:
@@ -301,3 +319,12 @@ if __name__ == '__main__':
     print(f'Accuracy of mapped source and target1 data : {acc1:.3f}')  # 映射源域和目标1数据的准确率达到0.800
     print(f'Accuracy of mapped target2 data            : {acc2:.3f}')  # 预测目标2的准确率达到0.700
     #print('src_domain type:',type(src_domain),'\nsrc_domain:',src_domain)
+
+"""
+总结：
+    step1：先将Xs, Xt通过fit()函数中的迁移过程，将其转换为Xs_new, Xt_new，
+    step2：然后利用变换后的源特征矩阵Xs_new及其对应的标签Ys.ravel（）上训练n_neighbors＝1的K近邻分类器；（利用新特征空间中的源域数据训练模型f(x)）
+    step3：使用训练好的分类器模型f(x), 对变换后的目标特征矩阵Xt_new进行预测，并将预测的标签存储在y_pred中.
+    step4：检验训练的分类器在目标域的预测性能：使用sklearn.metrics.accurcy_score计算预测的分类精度，该方法将预测标签y_pred与目标域Yt的真实标签进行比较（存在acc中）。
+        
+"""
