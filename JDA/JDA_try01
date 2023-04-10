@@ -1,0 +1,167 @@
+import numpy as np
+import scipy.io
+import scipy.linalg
+import sklearn.metrics
+from sklearn.neighbors import KNeighborsClassifier
+
+"""
+这段代码定义了一个函数kernel(ker, X1, X2, gamma)，
+用于计算两个数据集（X1和X2）之间的核矩阵。这个函数接收4个参数：
+        ker: 表示使用哪种核函数，可选的值包括'primal'（原始数据集）、'linear'（线性核函数）和'rbf'（径向基核函数）。
+        X1: 表示第一个数据集，必须提供。
+        X2: 表示第二个数据集，可以为空。如果为空，则表示仅对第一个数据集进行计算。
+        gamma: 表示径向基核函数的参数。
+根据不同的核函数类型，该函数会使用不同的方式计算核矩阵。
+        如果ker为'primal'或为空，则返回原始数据集。
+        如果ker为'linear'，则使用线性核函数计算核矩阵。
+        如果ker为'rbf'，则使用径向基核函数计算核矩阵。
+"""
+def kernel(ker, X1, X2, gamma):
+    K = None
+
+    # 如果ker为'primal'或为空，则返回原始数据集。
+    if not ker or ker == 'primal':
+        K = X1
+
+    # 如果ker为'linear'，则使用线性核函数计算核矩阵。
+    elif ker == 'linear':
+        if X2:
+            K = sklearn.metrics.pairwise.linear_kernel(np.asarray(X1).T, np.asarray(X2).T)
+        else:
+            # 用源域和目标域数据构造核矩阵
+            K = sklearn.metrics.pairwise.linear_kernel(np.asarray(X1).T)
+
+    # 如果ker为'rbf'，则使用径向基核函数计算核矩阵。
+    elif ker == 'rbf':
+        if X2:
+            K = sklearn.metrics.pairwise.rbf_kernel(np.asarray(X1).T, np.asarray(X2).T, gamma)
+        else:
+            K = sklearn.metrics.pairwise.rbf_kernel(np.asarray(X1).T, None, gamma)
+    return K
+
+
+class JDA:
+    def __init__(self, kernel_type='primal', dim=30, lamb=1, gamma=1, T=10):
+
+        """
+        类的初始化函数__init__接受5个参数：
+            kernel_type：核函数类型，可以是'primal'，'linear'或'rbf'。'primal'表示使用原始空间的内积作为核函数；'linear'表示使用线性核函数；'rbf'表示使用径向基函数（Radial Basis Function）作为核函数。
+            dim：转换后的特征维度。
+            lamb：一个超参数，用于平衡源域和目标域之间的差异。
+            gamma：仅在核函数类型为'rbf'时有用，表示径向基函数的带宽。
+            T：JDA算法的迭代次数。
+        """
+        self.kernel_type = kernel_type
+        self.dim = dim
+        self.lamb = lamb
+        self.gamma = gamma
+        self.T = T
+
+    # 如下是基于JDA算法的分类器，用于对源域和目标域的数据进行分类预测。
+    def fit_predict(self, Xs, Ys, Xt, Yt):
+        """
+        Xs：源域的特征数据
+        Ys：源域的标签数据
+        Xt：目标域的特征数据
+        Yt：目标域的标签数据
+        return: 精度acc, 目标域预测的标签数据Y_tar_pseudo, 每个迭代步骤的分类精度list_acc
+        """
+
+        '''
+        Transform and Predict using 1NN as JDA paper did
+        :param Xs: ns * n_feature, source feature
+        :param Ys: ns * 1, source label
+        :param Xt: nt * n_feature, target feature
+        :param Yt: nt * 1, target label
+        :return: acc, y_pred, list_acc
+        '''
+        list_acc = [] # 用于存储每个迭代步骤的分类精度list_acc
+
+        # 将源域和目标域的特征数据进行水平拼接，形成一个新的数据集 X
+        X = np.hstack((Xs.T, Xt.T))
+        X /= np.linalg.norm(X, axis=0) # 对新的数据集 X 进行归一化处理
+        m, n = X.shape
+        ns, nt = len(Xs), len(Xt) # 获取源域和目标域的样本数
+
+        # 构造一个标签权重矩阵 e
+        e = np.vstack((1 / ns * np.ones((ns, 1)), -1 / nt * np.ones((nt, 1))))
+        C = len(np.unique(Ys))  # 计算源域数据的类别数 C
+        H = np.eye(n) - 1 / n * np.ones((n, n))  # 构造一个中心化矩阵 H
+
+        # 初始化一个变量 M 和 Y_tar_pseudo
+        M = 0
+        Y_tar_pseudo = None
+
+        # 开始进行迭代；T：JDA算法的迭代次数
+        for t in range(self.T):
+
+            """
+            对于每一次迭代，根据当前的 Y_tar_pseudo 计算出一个新的标签权重矩阵 N，
+            并将其与 M0 进行叠加，得到新的 M。
+            """
+            N = 0 # 初始化一个标签权重矩阵N
+            M0 = e * e.T * C
+            if Y_tar_pseudo is not None and len(Y_tar_pseudo) == nt:
+                for c in range(1, C + 1):
+                    e = np.zeros((n, 1))
+                    tt = Ys == c
+                    e[np.where(tt == True)] = 1 / len(Ys[np.where(Ys == c)])
+                    yy = Y_tar_pseudo == c
+                    ind = np.where(yy == True)
+                    inds = [item + ns for item in ind]
+                    e[tuple(inds)] = -1 / len(Y_tar_pseudo[np.where(Y_tar_pseudo == c)])
+                    e[np.isinf(e)] = 0
+                    N = N + np.dot(e, e.T) # 计算出一个新的标签权重矩阵 N
+            M = M0 + N # 并将其与 M0 进行叠加，得到新的 M
+
+            # 对 M 进行归一化处理
+            M = M / np.linalg.norm(M, 'fro')
+
+            """
+            根据当前的核函数类型和参数计算出一个核矩阵 K，
+            并根据计算出的 M 和 K 计算出矩阵 a 和 b
+            """
+            K = kernel(self.kernel_type, X, None, gamma=self.gamma)
+            n_eye = m if self.kernel_type == 'primal' else n
+            a, b = np.linalg.multi_dot([K, M, K.T]) + self.lamb * np.eye(n_eye), np.linalg.multi_dot([K, H, K.T])
+
+            w, V = scipy.linalg.eig(a, b) # 根据矩阵 a 和 b 计算出特征向量和特征值
+            ind = np.argsort(w)  # 将特征向量按特征值大小进行排序
+            A = V[:, ind[:self.dim]] # 选取前 self.dim 个特征向量
+
+            """
+            将选取的特征向量作为新的特征空间，
+            计算出源域和目标域在该特征空间下的新的特征数据 Xs_new 和 Xt_new
+            """
+            Z = np.dot(A.T, K)
+            Z /= np.linalg.norm(Z, axis=0)
+            Xs_new, Xt_new = Z[:, :ns].T, Z[:, ns:].T
+
+            """
+            对新的特征数据 Xs_new 进行 KNN 分类，
+            并将分类结果作为目标域的伪标签数据 Y_tar_pseudo
+            """
+            clf = KNeighborsClassifier(n_neighbors=1)
+            clf.fit(Xs_new, Ys.ravel())
+            Y_tar_pseudo = clf.predict(Xt_new)
+
+            # 计算当前的分类精度，并将其存储到 list_acc 中
+            acc = sklearn.metrics.accuracy_score(Yt, Y_tar_pseudo)
+            list_acc.append(acc)
+            print('JDA iteration [{}/{}]: Acc: {:.4f}'.format(t + 1, self.T, acc))
+
+        # return: 精度acc, 目标域预测的标签数据Y_tar_pseudo, 每个迭代步骤的分类精度list_acc
+        return acc, Y_tar_pseudo, list_acc
+
+
+if __name__ == '__main__':
+    domains = ['caltech_surf_10.mat', 'amazon_surf_10.mat', 'webcam_surf_10.mat', 'dslr_surf_10.mat']
+    for i in range(1):
+        for j in range(2):
+            if i != j:
+                src, tar = 'C:/Users/ZARD/PycharmProjects/pythonProject/迁移学习/数据集/' + domains[i], 'C:/Users/ZARD/PycharmProjects/pythonProject/迁移学习/数据集/' + domains[j]
+                src_domain, tar_domain = scipy.io.loadmat(src), scipy.io.loadmat(tar)
+                Xs, Ys, Xt, Yt = src_domain['feas'], src_domain['label'], tar_domain['feas'], tar_domain['label']
+                jda = JDA(kernel_type='primal', dim=30, lamb=1, gamma=1)
+                acc, ypre, list_acc = jda.fit_predict(Xs, Ys, Xt, Yt)
+                print(acc)
